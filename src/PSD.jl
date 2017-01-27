@@ -20,7 +20,7 @@ Probability density function
 """
 function pdf(d :: Distribution, x)
 	z = symbols("z")
-    subs(diff(cfd(d, z), z), z => x)
+    subs(diff(cdf(d, z), z), z => x)
 end
 
 """
@@ -95,7 +95,7 @@ type GGS <: BoundDistribution
 end
 
 # All properties can be expressed directly:
-cfd(d :: GGS, x) = (x / d.xmax)^d.α
+cdf(d :: GGS, x) = (x / d.xmax)^d.α
 pdf(d :: GGS, x) = d.α / d.xmax * (x / d.xmax)^(d.α-1)
 mean(d :: GGS) = d.α / (d.α + 1) * d.xmax
 variance(d :: GGS) = d.α/((d.α+1)^2 * (d.α+2))*d.xmax^2
@@ -107,7 +107,7 @@ distribution. Returns a pair (D, R2) where
 D is a distribution object and R2 is R² coefficient
 of determinition of the fit.
 """
-function fit_cfd(::Type{Val{GGS}}, x, y)
+function fit_cdf(::Type{Val{GGS}}, x, y)
     xmax = x[end]
     xw = log.(x / xmax)
     yw = log.(y)
@@ -128,7 +128,7 @@ type Harris <: PSD.BoundDistribution
     xmax
 end
 
-cfd(d :: Harris, x) = 1-(1-(x/d.xmax)^d.s)^d.n
+cdf(d :: Harris, x) = 1-(1-(x/d.xmax)^d.s)^d.n
 
 function pdf(d :: Harris, x)
 	ξ = x / d.xmax
@@ -147,7 +147,7 @@ function relvar(d :: Harris)
 	(2*(1+d.n*d.s)^2)/(d.n*(2+d.n*d.s)) * beta(2/d.s,d.n)/(beta(1/d.s,d.n))^2-1
 end
 
-function fit_cfd(::Type{Val{Harris}}, x, y)
+function fit_cdf(::Type{Val{Harris}}, x, y)
     xmax = x[end]
     ξ = x / xmax
     # Stage 1: small ξ ⇒ get s
@@ -174,13 +174,13 @@ type LogNormal <: UnboundDistribution
 	σ
 end
 
-cfd(d :: LogNormal, x) = 0.5*(1+erf((log(x)-d.μ)/(√2*d.σ)))
+cdf(d :: LogNormal, x) = 0.5*(1+erf((log(x)-d.μ)/(√2*d.σ)))
 pdf(d :: LogNormal, x) = 1/(x * d.σ*√(2π))*exp(-0.5*((log(x)-d.μ)/d.σ)^2)
 mean(d :: LogNormal) = exp(d.μ+(d.σ)^2/2)
 variance(d :: LogNormal) = (exp((d.σ)^2)-1)*(mean(d))^2
 relvar(d :: LogNormal) = exp((d.σ)^2)-1
 
-function fit_cfd(::Type{Val{LogNormal}}, x, y)
+function fit_cdf(::Type{Val{LogNormal}}, x, y)
     h = erfinv.(2y-1)
     lnx = log.(x)
     (l,k) = linreg(h,lnx)
@@ -199,13 +199,13 @@ type RosinRammler <: UnboundDistribution
     x632
 end
 
-cfd(d :: RosinRammler, x) = 1 - exp(-(x/d.x632)^d.α)
+cdf(d :: RosinRammler, x) = 1 - exp(-(x/d.x632)^d.α)
 pdf(d :: RosinRammler, x) = d.α/x * (x/d.x632)^d.α * exp(-(x/d.x632)^d.α)
 mean(d :: RosinRammler) = d.x632 * gamma(1+1/d.α)
 variance(d :: RosinRammler) = d.x632^2*(gamma(1+2/d.α)-(gamma(1+1/d.α))^2)
 relvar(d :: RosinRammler) = gamma(1+2/d.α)/(gamma(1+1/d.α))^2-1
 
-function fit_cfd(::Type{Val{RosinRammler}}, x, y)
+function fit_cdf(::Type{Val{RosinRammler}}, x, y)
     xw = log.(x)
     yw = log.(log.(1.0 ./ (1.0 .- y)))
     (l,k) = linreg(yw, xw)
@@ -236,15 +236,15 @@ type TruncatedDistribution{T <: UnboundDistribution} <: AbstractTruncatedDistrib
     xmax
 end
 
-cfd{T <: UnboundDistribution}(d::TruncatedDistribution{T}, x) =
-	cfd(d.d, truncb(d.xmax, x))
+cdf{T <: UnboundDistribution}(d::TruncatedDistribution{T}, x) =
+	cdf(d.d, truncb(d.xmax, x))
 pdf{T <: UnboundDistribution}(d :: TruncatedDistribution{T}, x) =
 	pdf(d.d, truncb(d.xmax, x))*dtruncb(d.xmax, x)
 
-function fit_cfd{T <: UnboundDistribution}(::Type{Val{TruncatedDistribution{T}}}, x, y)
+function fit_cdf{T <: UnboundDistribution}(::Type{Val{TruncatedDistribution{T}}}, x, y)
     xmax = x[end]
     xw = truncb.(xmax, x[1:end-1])
-    d, r2d = fit_cfd(Val{T}, xw, y[1:end-1])
+    d, r2d = fit_cdf(Val{T}, xw, y[1:end-1])
     (TruncatedDistribution(d, xmax), r2d)
 end
 
@@ -260,7 +260,7 @@ type TRR <: BoundDistribution
 		new(TruncatedDistribution(RosinRammler(α, truncb(xmax, x632)), xmax))
 end
 
-cfd(d :: TRR, x) = 1 - exp(-(x*d.d.xmax / (d.d.d.x632*(d.d.xmax - x)))^d.d.d.α)
+cdf(d :: TRR, x) = 1 - exp(-(x*d.d.xmax / (d.d.d.x632*(d.d.xmax - x)))^d.d.d.α)
 
 function pdf(d :: TRR, x)
     td = d.d # truncated distribution
@@ -273,11 +273,11 @@ function pdf(d :: TRR, x)
 end
 
 # These only work numerically
-mean(d :: TRR) = quadgk(x -> x * p(d, x), 0.0, d.d.xmax) |> first
-variance(d :: TRR) = (quadgk(x->x^2 * p(d, x), 0.0, d.d.xmax) |> first) - (mean(d))^2
+mean(d :: TRR) = quadgk(x -> x * pdf(d, x), 0.0, d.d.xmax) |> first
+variance(d :: TRR) = (quadgk(x->x^2 * pdf(d, x), 0.0, d.d.xmax) |> first) - (mean(d))^2
 
-function fit_cfd(::Type{Val{TRR}}, x, y)
-    d, r2d = fit_cfd(Val{TruncatedDistribution{RosinRammler}}, x, y)
+function fit_cdf(::Type{Val{TRR}}, x, y)
+    d, r2d = fit_cdf(Val{TruncatedDistribution{RosinRammler}}, x, y)
     (TRR(d.d.α, truncf(d.xmax, d.d.x632), d.xmax), r2d)
 end
 
