@@ -24,37 +24,51 @@ function pdf(d :: Distribution, x)
 end
 
 """
-Mathematical expectation, mean value, of the distribution
+Integrate `f(x) p(x)` expression
 """
-function mean(d :: Distribution; xmin = -oo, xmax = oo,assumption = false)
-	if assumption
-		x = symbols("x"; (assumption, true))
+function integrate_distribution(f, d :: Distribution; numerical = false, xmin = -oo, xmax = oo, assumption = false)
+	if numerical
+		quadgk(z -> f(z)*pdf(d, z), xmin, xmax) |> first
 	else
-		x = symbols("x")
+		x = assumption ? symbols("x"; (assumption, true)) : symbols("x")
+		integrate(f(x)*pdf(d,x), (x, xmin, xmax))
 	end
-    integrate(pdf(d, x)*x, (x, xmin, xmax))
+end
+
+"""
+Mathematical expectation, mean value, of the distribution
+
+Keyword arguements:
+- `numerical` (`false`) use numerical integration?
+- `xmin = -oo` - minimum value of x
+- `xmax = oo` - maximum value of x
+- `assumption = false` - add any assumptions about x (e.g., `:positive`)
+"""
+function mean(d :: Distribution; kv...)
+	integrate_distribution(x->x, d; kv...)
 end
 
 """
 Expectation of ξ². Sometimes it is more efficient to calculate just this
 without calculating the full variance (that requires also mean of ξ)
 """
-function mean_of_square(d :: Distribution; xmin = -oo, xmax = oo, assumption = false)
-	if assumption
-		x = symbols("x";(assumption, true))
-	else
-		x = symbols("x")
-	end
-	integrate(pdf(d,x)*x^2, (x, xmin, xmax))
+function mean_of_square(d :: Distribution; kv...)
+	integrate_distribution(x->x^2, d; kv...)
 end
 
 """
 Variance of the distribution
 """
-function variance(d :: Distribution; xmin = -oo, xmax = oo, assumption = false)
-	x2 = mean_of_square(d, xmin=xmin, xmax=xmax, assumption=assumption)
-    me = mean(d, xmin = xmin, xmax = xmax)
+function variance(d :: Distribution; kv...)
+	x2 = mean_of_square(d; kv...)
+    me = mean(d; kv...)
     x2 - me^2
+end
+
+function relvar(d :: Distribution; kv...)
+	x2 = mean_of_square(d; kv...)
+	me = mean(d; kv...)
+	x2 / me^2 - (me/me)
 end
 
 """
@@ -241,6 +255,30 @@ cdf{T <: UnboundDistribution}(d::TruncatedDistribution{T}, x) =
 pdf{T <: UnboundDistribution}(d :: TruncatedDistribution{T}, x) =
 	pdf(d.d, truncb(d.xmax, x))*dtruncb(d.xmax, x)
 
+function integrate_distribution(f, d :: TruncatedDistribution; numerical = true, xmin = 0.0, xmax = d.xmax, assumotions = false)
+	integrate_distribution(f, d.d, xmin = xmin, xmax = xmax, numerical = numerical, assumptions = assumptions)
+end
+
+function mean(d :: TruncatedDistribution; kv...)
+	integrate_distribution(x->x, d; kv...)
+end
+
+function mean_of_square(d :: TruncatedDistribution; kv...)
+	integrate_distribution(x->x^2, d; kv...)
+end
+
+function variance(d :: TruncatedDistribution; kv...)
+	E = mean(d; kv...)
+	E2 = mean_of_square(d; kv...)
+	E2 - E^2
+end
+
+function relvar(d :: TruncatedDistribution; kv...)
+	E = mean(d; kv...)
+	E2 = mean_of_square(d; kv...)
+	E2/E^2 - 1.0
+end
+
 function fit_cdf{T <: UnboundDistribution}(::Type{Val{TruncatedDistribution{T}}}, x, y)
     xmax = x[end]
     xw = truncb.(xmax, x[1:end-1])
@@ -279,6 +317,38 @@ variance(d :: TRR) = (quadgk(x->x^2 * pdf(d, x), 0.0, d.d.xmax) |> first) - (mea
 function fit_cdf(::Type{Val{TRR}}, x, y)
     d, r2d = fit_cdf(Val{TruncatedDistribution{RosinRammler}}, x, y)
     (TRR(d.d.α, truncf(d.xmax, d.d.x632), d.xmax), r2d)
+end
+
+# %% Jumped (discontinuous) distribution
+type JumpedDistribution{T <: Distribution} <: Distribution
+	d :: T
+	xmin
+end
+
+cdf(d :: JumpedDistribution, x) = cdf(d.d,x)*Heaviside(x-d.xmin)
+
+function pdf(d :: JumpedDistribution, x)
+	# No δ(x)-part as it cannot be hanled numerically
+	pdf(d.d,x)*Heaviside(x-d.xmin)+cdf(d.d,x)*DiracDelta(x-d.xmin)
+end
+
+function integrate_distribution(f, d :: JumpedDistribution; xmin = -oo, kv...)
+	if xmin > d.xmin
+		integrate_distribution(f, d.d; xmin = xmin, kv...)
+	else
+		integrate_distribution(f, d.d; xmin = d.xmin, kv...) + f(d.xmin)*cdf(d.d, d.xmin)
+	end
+end
+
+# %% Characteristics of the distribution
+
+function particles_number(φ, d :: Distribution; numerical = false, kv...)
+	(1-φ) * 6 / (numerical? pi : PI) *
+	integrate_distribution(x->x^(-3), d; numerical = numerical, kv...)
+end
+
+function particles_area(φ, d :: Distribution; kv...)
+	6(1-φ) * integrate_distribution(x -> x^(-1), d; kv...)
 end
 
 # %%
