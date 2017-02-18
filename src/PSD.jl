@@ -8,12 +8,13 @@ using SymPy
 
 # %% General distribution
 """
-Abstract type for all distributions
+Abstract type for all distributions.
+Type parameter `T` defines the domain: numerical or symbolic
 """
-abstract Distribution
+abstract Distribution{T}
 
-abstract UnboundDistribution <: Distribution
-abstract BoundDistribution <: Distribution
+abstract UnboundDistribution{T} <: Distribution{T}
+abstract BoundDistribution{T} <: Distribution{T}
 
 """
 Probability density function
@@ -23,16 +24,22 @@ function pdf(d :: Distribution, x)
     subs(diff(cdf(d, z), z), z => x)
 end
 
+xmin_distribution(d :: Distribution) = 0
+xmin_distribution{T <: Real}(d :: Distribution{T}) = zero(T)
+
+xmax_distribution(d :: Distribution{SymPy.Sym}) = oo
+xmax_distribution{T <: Real}(d :: Distribution{T}) = convert(T, Inf)
+
 """
-Integrate `f(x) p(x)` expression
+Integrate `f(x) pdf(x)` expression for a given distribution.
 """
-function integrate_distribution(f, d :: Distribution; numerical = false, xmin = -oo, xmax = oo, assumption = false)
-	if numerical
-		quadgk(z -> f(z)*pdf(d, z), xmin, xmax) |> first
-	else
-		x = assumption ? symbols("x"; (assumption, true)) : symbols("x")
-		integrate(f(x)*pdf(d,x), (x, xmin, xmax))
-	end
+function integrate_distribution{T <: Real}(f, d :: Distribution{T}, xmin :: T, xmax :: T)
+	quadgk(z -> f(z) * pdf(d,z), xmin, xmax) |> first
+end
+
+function integrate_distribution(f, d :: Distribution{SymPy.Sym}, xmin, xmax; assumptions...)
+	x = symbols("x"; assumptions...)
+	integrate(f(x)*pdf(d,x), (x, xmin, xmax))
 end
 
 """
@@ -45,7 +52,7 @@ Keyword arguements:
 - `assumption = false` - add any assumptions about x (e.g., `:positive`)
 """
 function mean(d :: Distribution; kv...)
-	integrate_distribution(x->x, d; kv...)
+	integrate_distribution(x->x, d, xmin_distribution(d), xmax_distribution(d); kv...)
 end
 
 """
@@ -53,7 +60,7 @@ Expectation of ξ². Sometimes it is more efficient to calculate just this
 without calculating the full variance (that requires also mean of ξ)
 """
 function mean_of_square(d :: Distribution; kv...)
-	integrate_distribution(x->x^2, d; kv...)
+	integrate_distribution(x->x^2, d, xmin_distribution(d), xmax_distribution(d); kv...)
 end
 
 """
@@ -103,9 +110,9 @@ Gates-Gaudin-Schuhmann distribution
 
 P(x) = (x/xmax)^α
 """
-type GGS <: BoundDistribution
-    α
-    xmax
+type GGS{T} <: BoundDistribution{T}
+    α :: T
+    xmax :: T
 end
 
 # All properties can be expressed directly:
@@ -114,6 +121,8 @@ pdf(d :: GGS, x) = d.α / d.xmax * (x / d.xmax)^(d.α-1)
 mean(d :: GGS) = d.α / (d.α + 1) * d.xmax
 variance(d :: GGS) = d.α/((d.α+1)^2 * (d.α+2))*d.xmax^2
 relvar(d :: GGS) = 1/(d.α*(d.α+2))
+
+xmax_distribution(d :: GGS) = d.xmax
 
 """
 Fits data representing a CFD to a particular
@@ -136,11 +145,13 @@ end
 """
 Harris distribution
 """
-type Harris <: PSD.BoundDistribution
-    n
-    s
-    xmax
+type Harris{T} <: PSD.BoundDistribution{T}
+    n :: T
+    s :: T
+    xmax :: T
 end
+
+xmax_distribution(d :: Harris) = d.xmax
 
 cdf(d :: Harris, x) = 1-(1-(x/d.xmax)^d.s)^d.n
 
@@ -183,9 +194,9 @@ end
 """
 Log-normal distribution
 """
-type LogNormal <: UnboundDistribution
-	μ
-	σ
+type LogNormal{T} <: UnboundDistribution{T}
+	μ :: T
+	σ :: T
 end
 
 cdf(d :: LogNormal, x) = 0.5*(1+erf((log(x)-d.μ)/(√2*d.σ)))
@@ -208,9 +219,9 @@ end
 """
 Rosin-Rammler distribution
 """
-type RosinRammler <: UnboundDistribution
-    α
-    x632
+type RosinRammler{T} <: UnboundDistribution{T}
+    α :: T
+    x632 :: T
 end
 
 cdf(d :: RosinRammler, x) = 1 - exp(-(x/d.x632)^d.α)
@@ -243,43 +254,19 @@ Derivative of truncate backward
 """
 dtruncb(ymax, y) = (ymax/(y-ymax))^2
 
-abstract AbstractTruncatedDistribution <: BoundDistribution
+abstract AbstractTruncatedDistribution{T} <: BoundDistribution{T}
 
-type TruncatedDistribution{T <: UnboundDistribution} <: AbstractTruncatedDistribution
+type TruncatedDistribution{U,T <: UnboundDistribution{U}} <: AbstractTruncatedDistribution{U}
     d :: T
-    xmax
+    xmax :: U
 end
 
-cdf{T <: UnboundDistribution}(d::TruncatedDistribution{T}, x) =
-	cdf(d.d, truncb(d.xmax, x))
-pdf{T <: UnboundDistribution}(d :: TruncatedDistribution{T}, x) =
-	pdf(d.d, truncb(d.xmax, x))*dtruncb(d.xmax, x)
+xmax_distribution(d :: TruncatedDistribution) = d.xmax
 
-function integrate_distribution(f, d :: TruncatedDistribution; numerical = true, xmin = 0.0, xmax = d.xmax, assumotions = false)
-	integrate_distribution(f, d.d, xmin = xmin, xmax = xmax, numerical = numerical, assumptions = assumptions)
-end
+cdf(d::TruncatedDistribution, x) = cdf(d.d, truncb(d.xmax, x))
+pdf(d :: TruncatedDistribution, x) = pdf(d.d, truncb(d.xmax, x))*dtruncb(d.xmax, x)
 
-function mean(d :: TruncatedDistribution; kv...)
-	integrate_distribution(x->x, d; kv...)
-end
-
-function mean_of_square(d :: TruncatedDistribution; kv...)
-	integrate_distribution(x->x^2, d; kv...)
-end
-
-function variance(d :: TruncatedDistribution; kv...)
-	E = mean(d; kv...)
-	E2 = mean_of_square(d; kv...)
-	E2 - E^2
-end
-
-function relvar(d :: TruncatedDistribution; kv...)
-	E = mean(d; kv...)
-	E2 = mean_of_square(d; kv...)
-	E2/E^2 - 1.0
-end
-
-function fit_cdf{T <: UnboundDistribution}(::Type{Val{TruncatedDistribution{T}}}, x, y)
+function fit_cdf{U, T <: UnboundDistribution{U}}(::Type{Val{TruncatedDistribution{U,T}}}, x, y)
     xmax = x[end]
     xw = truncb.(xmax, x[1:end-1])
     d, r2d = fit_cdf(Val{T}, xw, y[1:end-1])
@@ -288,20 +275,15 @@ end
 
 # %% Truncated Rosin-Rammler
 
-# Need to create the type to specify p() and P() functions explicitly
-"""
-Truncated Rosin-Rammler
-"""
-type TRR <: BoundDistribution
-    d :: TruncatedDistribution{RosinRammler}
-    TRR(α, x632, xmax) =
-		new(TruncatedDistribution(RosinRammler(α, truncb(xmax, x632)), xmax))
+const TRR = TruncatedDistribution{Float64, RosinRammler{Float64}}
+
+function TRR(α :: Float64, x632 :: Float64, xmax :: Float64)
+	TruncatedDistribution(RosinRammler(α, truncb(xmax, x632)), xmax)
 end
 
-cdf(d :: TRR, x) = 1 - exp(-(x*d.d.xmax / (d.d.d.x632*(d.d.xmax - x)))^d.d.d.α)
+cdf(d :: TRR, x) = 1 - exp(-(x*d.d.xmax / (d.d.x632*(d.xmax - x)))^d.d.d.α)
 
-function pdf(d :: TRR, x)
-    td = d.d # truncated distribution
+function pdf(td :: TRR, x)
     rr = td.d
     α = rr.α
     x632 = rr.x632
@@ -310,41 +292,56 @@ function pdf(d :: TRR, x)
     α*xmax*tmp / (x*(xmax-x)) * exp(-tmp)
 end
 
-# These only work numerically
-mean(d :: TRR) = quadgk(x -> x * pdf(d, x), 0.0, d.d.xmax) |> first
-variance(d :: TRR) = (quadgk(x->x^2 * pdf(d, x), 0.0, d.d.xmax) |> first) - (mean(d))^2
-
-function fit_cdf(::Type{Val{TRR}}, x, y)
-    d, r2d = fit_cdf(Val{TruncatedDistribution{RosinRammler}}, x, y)
-    (TRR(d.d.α, truncf(d.xmax, d.d.x632), d.xmax), r2d)
-end
-
 # %% Jumped (discontinuous) distribution
-type JumpedDistribution{T <: Distribution} <: Distribution
-	d :: T
-	xmin
+type JumpedDistribution{U, T <: Distribution{U}} <: Distribution{U}
+	d :: T{U}
+	xmin :: U
 end
 
-cdf(d :: JumpedDistribution, x) = cdf(d.d,x)*Heaviside(x-d.xmin)
+xmin_distribution(d :: JumpedDistribution) = xmin
+xmax_distribution(d :: JumpedDistribution) = xmax_distribution(d.d)
 
-function pdf(d :: JumpedDistribution, x)
-	# No δ(x)-part as it cannot be hanled numerically
+
+cdf{T}(d :: JumpedDistribution{SymPy.Sym, T}, x) = cdf(d.d,x)*Heaviside(x-d.xmin)
+
+function cdf{U <: Real, T}(d :: JumpedDistribution{U, T}, x)
+	if x < d.xmin
+		zero(U)
+	else
+		cdf(d.d, x)
+	end
+end
+
+function pdf{T}(d :: JumpedDistribution{SymPy.Sym, T}, x)
 	pdf(d.d,x)*Heaviside(x-d.xmin)+cdf(d.d,x)*DiracDelta(x-d.xmin)
 end
 
-function integrate_distribution(f, d :: JumpedDistribution; xmin = -oo, kv...)
-	if xmin > d.xmin
-		integrate_distribution(f, d.d; xmin = xmin, kv...)
+function pdf{U <: Real, T}(d :: JumpedDistribution{U,T}, x)
+	if x < d.xmin
+		zero(U)
+	elseif x == d.xmin
+		convert(U, Inf)
 	else
-		integrate_distribution(f, d.d; xmin = d.xmin, kv...) + f(d.xmin)*cdf(d.d, d.xmin)
+		pdf(d.d, x)
+	end
+end
+
+function integrate_distribution{U <: Real, T}(f, d :: JumpedDistribution{U,T}, xmin, xmax)
+	if xmin > d.xmin
+		integrate_distribution(f, d.d, xmin, xmax = xmax)
+	else
+		integrate_distribution(f, d.d, xmin = d.xmin, xmax) + f(d.xmin)*cdf(d.d, d.xmin)
 	end
 end
 
 # %% Characteristics of the distribution
 
-function particles_number(φ, d :: Distribution; numerical = false, kv...)
-	(1-φ) * 6 / (numerical? pi : PI) *
-	integrate_distribution(x->x^(-3), d; numerical = numerical, kv...)
+function particles_number{T <: Real}(φ :: T, d :: Distribution{T})
+	(1-φ) * 6 / pi * integrate_distribution(x->x^(-3), d)
+end
+
+function particles_number(φ :: SymPy.Sym, d :: Distribution{SymPy.Sym}; assumptions...)
+	(1-φ) * 6 / PI * integrate_distribution(x->x^(-3), d; assumptions)
 end
 
 function particles_area(φ, d :: Distribution; kv...)
